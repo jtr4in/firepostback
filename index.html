@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Manual Postback Firing Tool</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2em; }
+    label { display: block; margin-top: 1em; }
+    textarea { width: 100%; height: 120px; }
+    input[type="text"] { width: 200px; }
+    .url-list { margin-top: 1em; }
+    .url-item { font-size: 0.95em; margin-bottom: 3px; }
+    .success { color: green; }
+    .fail { color: red; }
+    .processing { color: orange; }
+  </style>
+</head>
+<body>
+  <h2>Manual Postback Firing Tool</h2>
+  <form id="mainForm" onsubmit="return false;">
+    <label>mbm: <input type="text" id="mbm" required></label>
+    <label>mbr: <input type="text" id="mbr" required></label>
+    <label>
+      Paste tab-delimited (mbs &mdash; mbd &mdash; mbi) rows:
+      <textarea id="inputRows" placeholder="E.g.&#10;130	9560.6420.88857	186118092"></textarea>
+    </label>
+    <button type="button" onclick="generateUrls()">Generate URLs</button>
+    <button type="button" onclick="processUrls()">Process</button>
+  </form>
+  <div id="urlList" class="url-list"></div>
+  <script>
+    let urls = [];
+
+    function generateUrls() {
+      urls = [];
+      document.getElementById('urlList').innerHTML = '';
+      const mbm = encodeURIComponent(document.getElementById('mbm').value.trim());
+      const mbr = encodeURIComponent(document.getElementById('mbr').value.trim());
+      const rows = document.getElementById('inputRows').value.trim().split('\n');
+
+      if (!mbm || !mbr) {
+        alert('mbm and mbr are required.');
+        return;
+      }
+
+      rows.forEach((row, idx) => {
+        const cols = row.split('\t');
+        if (cols.length !== 3) return;
+
+        const mbss = encodeURIComponent(cols[0].trim());
+        const mbdd = encodeURIComponent(cols[1].trim());
+        const mbii = encodeURIComponent(cols[2].trim());
+
+        const url = `https://chant3rm1.com/trk/lead?mbm=${mbm}&mbr=${mbr}&mbs=${mbss}&mbd=${mbdd}&mbi=${mbii}`;
+        urls.push(url);
+      });
+
+      if (urls.length === 0) {
+        document.getElementById('urlList').innerHTML = '<span class="fail">No valid rows found.</span>';
+      } else {
+        document.getElementById('urlList').innerHTML = urls.map(u => `<div class="url-item">${u}</div>`).join('');
+      }
+    }
+
+    async function processUrls() {
+      if (urls.length === 0) {
+        alert('Generate URLs first.');
+        return;
+      }
+      const urlListDiv = document.getElementById('urlList');
+      urlListDiv.innerHTML = urls.map((u, i) => `<div class="url-item" id="url-${i}">${u}</div>`).join('');
+
+      for (let i = 0; i < urls.length; i++) {
+        document.getElementById(`url-${i}`).className = 'url-item processing';
+        document.getElementById(`url-${i}`).textContent = urls[i] + ' ... Processing';
+
+        try {
+          // Use fetch to send GET request (CORS may block, so check browser console for errors)
+          const response = await fetch(urls[i]);
+          if (response.ok) {
+            document.getElementById(`url-${i}`).className = 'url-item success';
+            document.getElementById(`url-${i}`).textContent = urls[i] + ' ✔ Success';
+          } else {
+            document.getElementById(`url-${i}`).className = 'url-item fail';
+            document.getElementById(`url-${i}`).textContent = urls[i] + ' ✖ Failed (' + response.status + ')';
+          }
+        } catch (e) {
+          document.getElementById(`url-${i}`).className = 'url-item fail';
+          document.getElementById(`url-${i}`).textContent = urls[i] + ' ✖ Error';
+        }
+        // Wait 500ms between requests
+        await new Promise(res => setTimeout(res, 500));
+      }
+    }
+  </script>
+</body>
+</html>
