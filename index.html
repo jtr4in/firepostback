@@ -21,7 +21,7 @@
     <label>mbm: <input type="text" id="mbm" required></label>
     <label>mbr: <input type="text" id="mbr" required></label>
     <label>
-      Paste tab-delimited (mbs &mdash; mbd &mdash; mbi) rows:
+      Paste tab-delimited (mbcm &mdash; mbd &mdash; mbi) rows:
       <textarea id="inputRows" placeholder="E.g.&#10;130	9560.6420.88857	186118092"></textarea>
     </label>
     <button type="button" onclick="generateUrls()">Generate URLs</button>
@@ -47,11 +47,11 @@
         const cols = row.split('\t');
         if (cols.length !== 3) return;
 
-        const mbss = encodeURIComponent(cols[0].trim());
+        const mbcms = encodeURIComponent(cols[0].trim());
         const mbdd = encodeURIComponent(cols[1].trim());
         const mbii = encodeURIComponent(cols[2].trim());
 
-        const url = `https://chant3rm1.com/trk/lead?mbm=${mbm}&mbr=${mbr}&mbs=${mbss}&mbd=${mbdd}&mbi=${mbii}`;
+        const url = `https://chant3rm1.com/trk/lead?mbm=${mbm}&mbr=${mbr}&mbcm=${mbcms}&mbd=${mbdd}&mbi=${mbii}`;
         urls.push(url);
       });
 
