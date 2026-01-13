@@ -1,6 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <script type="module">import { injectIntoGlobalHook } from "/@react-refresh"
+injectIntoGlobalHook(window);
+window.$RefreshReg$ = () => {};
+window.$RefreshSig$ = () => (type) => type;</script>
+
+  <script type="module" src="/@vite/client"></script>
+
   <meta charset="UTF-8">
   <title>Manual Postback Firing Tool</title>
   <style>
@@ -13,15 +20,30 @@
     .success { color: green; }
     .fail { color: red; }
     .processing { color: orange; }
+    .radio-group { display: flex; gap: 1em; margin-top: 0.5em; }
+    .radio-group div { display: flex; align-items: center; gap: 0.5em; }
   </style>
 </head>
 <body>
   <h2>Manual Postback Firing Tool</h2>
   <form id="mainForm" onsubmit="return false;">
     <label>mbm: <input type="text" id="mbm" required></label>
-    <label>mbr: <input type="text" id="mbr" required></label>
-    <label>
-      Paste tab-delimited (mbcm &mdash; mbd &mdash; mbi) rows:
+    <label>mbr (optional): <input type="text" id="mbr"></label>
+
+    <label style="margin-top: 1em;">Select Parameter Type:</label>
+    <div class="radio-group">
+      <div>
+        <input type="radio" id="paramTypeMbcm" name="paramType" value="mbcm" checked>
+        <label for="paramTypeMbcm" style="margin-top: 0;">mbcm</label>
+      </div>
+      <div>
+        <input type="radio" id="paramTypeMbs" name="paramType" value="mbs">
+        <label for="paramTypeMbs" style="margin-top: 0;">mbs</label>
+      </div>
+    </div>
+
+    <label style="margin-top: 1em;">
+      Paste tab-delimited (<span id="paramTypeLabel">mbcm</span> &mdash; mbd &mdash; mbi) rows:
       <textarea id="inputRows" placeholder="E.g.&#10;130	9560.6420.88857	186118092"></textarea>
     </label>
     <button type="button" onclick="generateUrls()">Generate URLs</button>
@@ -30,36 +52,67 @@
   <div id="urlList" class="url-list"></div>
   <script>
     let urls = [];
+    let isProcessing = false;
+
+    document.querySelectorAll('input[name="paramType"]').forEach(radio => {
+      radio.addEventListener('change', (event) => {
+        document.getElementById('paramTypeLabel').textContent = event.target.value;
+      });
+    });
+
+    function getSelectedParamType() {
+      return document.querySelector('input[name="paramType"]:checked').value;
+    }
 
     function generateUrls() {
       urls = [];
       document.getElementById('urlList').innerHTML = '';
-      const mbm = encodeURIComponent(document.getElementById('mbm').value.trim());
-      const mbr = encodeURIComponent(document.getElementById('mbr').value.trim());
-      const rows = document.getElementById('inputRows').value.trim().split('\n');
+      const mbm = document.getElementById('mbm').value.trim();
+      const mbr = document.getElementById('mbr').value.trim();
+      const inputRows = document.getElementById('inputRows').value.trim();
+      const paramType = getSelectedParamType();
 
-      if (!mbm || !mbr) {
-        alert('mbm and mbr are required.');
+      if (!mbm) {
+        alert('mbm is required.');
         return;
       }
+
+      const rows = inputRows.split('\n');
 
       rows.forEach((row, idx) => {
         const cols = row.split('\t');
         if (cols.length !== 3) return;
 
-        const mbcms = encodeURIComponent(cols[0].trim());
-        const mbdd = encodeURIComponent(cols[1].trim());
-        const mbii = encodeURIComponent(cols[2].trim());
+        const param1 = encodeURIComponent(cols[0].trim()); // This will be mbcm or mbs
+        const mbd = encodeURIComponent(cols[1].trim());
+        const mbi = encodeURIComponent(cols[2].trim());
 
-        const url = `https://chant3rm1.com/trk/lead?mbm=${mbm}&mbr=${mbr}&mbcm=${mbcms}&mbd=${mbdd}&mbi=${mbii}`;
-        urls.push(url);
+        let baseUrl = `https://chant3rm1.com/trk/lead?mbm=${encodeURIComponent(mbm)}`;
+        if (mbr) { // Only add mbr if it's not empty
+          baseUrl += `&mbr=${encodeURIComponent(mbr)}`;
+        }
+        
+        const url = `${baseUrl}&${paramType}=${param1}&mbd=${mbd}&mbi=${mbi}`;
+        urls.push({ id: `url-${idx}`, url, status: "pending", message: "" });
       });
 
       if (urls.length === 0) {
-        document.getElementById('urlList').innerHTML = '<span class="fail">No valid rows found.</span>';
+        document.getElementById('urlList').innerHTML = '<div class="url-item fail">No valid rows found. Please ensure rows are tab-delimited with 3 columns.</div>';
       } else {
-        document.getElementById('urlList').innerHTML = urls.map(u => `<div class="url-item">${u}</div>`).join('');
+        renderUrls();
       }
+    }
+
+    function renderUrls() {
+      const urlListDiv = document.getElementById('urlList');
+      urlListDiv.innerHTML = urls.map(item => {
+        let statusClass = '';
+        if (item.status === 'success') statusClass = 'success';
+        else if (item.status === 'fail') statusClass = 'fail';
+        else if (item.status === 'processing') statusClass = 'processing';
+
+        return `<div class="url-item ${statusClass}" id="${item.id}">${item.url} ${item.message}</div>`;
+      }).join('');
     }
 
     async function processUrls() {
@@ -67,30 +120,66 @@
         alert('Generate URLs first.');
         return;
       }
-      const urlListDiv = document.getElementById('urlList');
-      urlListDiv.innerHTML = urls.map((u, i) => `<div class="url-item" id="url-${i}">${u}</div>`).join('');
+      if (isProcessing) return;
 
-      for (let i = 0; i < urls.length; i++) {
-        document.getElementById(`url-${i}`).className = 'url-item processing';
-        document.getElementById(`url-${i}`).textContent = urls[i] + ' ... Processing';
+      isProcessing = true;
+      // Update all URLs to pending status initially
+      urls = urls.map(item => ({ ...item, status: "pending", message: "" }));
+      renderUrls();
 
+      const CONCURRENCY_LIMIT = 5; // Number of concurrent requests
+      const tasks = urls.map((urlItem) => async () => {
+        // Mark as processing
+        urls = urls.map(u => u.id === urlItem.id ? { ...u, status: "processing", message: "... Processing" } : u);
+        renderUrls();
+
+        let result;
         try {
-          // Use fetch to send GET request (CORS may block, so check browser console for errors)
-          const response = await fetch(urls[i]);
+          const response = await fetch(urlItem.url);
           if (response.ok) {
-            document.getElementById(`url-${i}`).className = 'url-item success';
-            document.getElementById(`url-${i}`).textContent = urls[i] + ' ✔ Success';
+            result = { status: "success", message: "✔ Success" };
           } else {
-            document.getElementById(`url-${i}`).className = 'url-item fail';
-            document.getElementById(`url-${i}`).textContent = urls[i] + ' ✖ Failed (' + response.status + ')';
+            result = { status: "fail", message: `✖ Failed (${response.status})` };
           }
         } catch (e) {
-          document.getElementById(`url-${i}`).className = 'url-item fail';
-          document.getElementById(`url-${i}`).textContent = urls[i] + ' ✖ Error';
+          result = { status: "fail", message: "✖ Error" };
         }
-        // Wait 500ms between requests
-        await new Promise(res => setTimeout(res, 500));
+
+        // Update with final result
+        urls = urls.map(u => (u.id === urlItem.id ? { ...u, ...result } : u));
+        renderUrls();
+      });
+
+      const runningPromises = [];
+      let taskIndex = 0;
+
+      const runNextTask = () => {
+        if (taskIndex < tasks.length) {
+          const task = tasks[taskIndex];
+          taskIndex++;
+          const promise = task().finally(() => {
+            // Remove the finished promise from the running pool
+            const index = runningPromises.indexOf(promise);
+            if (index > -1) {
+              runningPromises.splice(index, 1);
+            }
+            // Run the next task if available
+            runNextTask();
+          });
+          runningPromises.push(promise);
+        }
+      };
+
+      // Start initial concurrent tasks up to the concurrency limit
+      for (let i = 0; i < CONCURRENCY_LIMIT && i < tasks.length; i++) {
+        runNextTask();
       }
+
+      // Wait for all running promises to complete
+      await Promise.all(runningPromises);
+
+      isProcessing = false;
+      alert("All URLs processed!");
     }
   </script>
 </body>
