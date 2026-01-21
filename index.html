@@ -1,13 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <script type="module">import { injectIntoGlobalHook } from "/@react-refresh"
-injectIntoGlobalHook(window);
-window.$RefreshReg$ = () => {};
-window.$RefreshSig$ = () => (type) => type;</script>
-
-  <script type="module" src="/@vite/client"></script>
-
   <meta charset="UTF-8">
   <title>Manual Postback Firing Tool</title>
   <style>
@@ -25,7 +18,9 @@ window.$RefreshSig$ = () => (type) => type;</script>
   </style>
 </head>
 <body>
+
   <h2>Manual Postback Firing Tool</h2>
+
   <form id="mainForm" onsubmit="return false;">
     <label>mbm: <input type="text" id="mbm" required></label>
     <label>mbr (optional): <input type="text" id="mbr"></label>
@@ -40,23 +35,41 @@ window.$RefreshSig$ = () => (type) => type;</script>
         <input type="radio" id="paramTypeMbs" name="paramType" value="mbs">
         <label for="paramTypeMbs" style="margin-top: 0;">mbs</label>
       </div>
+      <div>
+        <input type="radio" id="paramTypeNone" name="paramType" value="none">
+        <label for="paramTypeNone" style="margin-top: 0;">None</label>
+      </div>
     </div>
 
     <label style="margin-top: 1em;">
-      Paste tab-delimited (<span id="paramTypeLabel">mbcm</span> &mdash; mbd &mdash; mbi) rows:
+      Paste tab-delimited (<span id="paramTypeLabel">mbcm — mbd — mbi</span>) rows:
       <textarea id="inputRows" placeholder="E.g.&#10;130	9560.6420.88857	186118092"></textarea>
     </label>
+
     <button type="button" onclick="generateUrls()">Generate URLs</button>
     <button type="button" onclick="processUrls()">Process</button>
   </form>
+
   <div id="urlList" class="url-list"></div>
+
   <script>
     let urls = [];
     let isProcessing = false;
 
+    // Listen for radio button changes to update the UI instructions
     document.querySelectorAll('input[name="paramType"]').forEach(radio => {
       radio.addEventListener('change', (event) => {
-        document.getElementById('paramTypeLabel').textContent = event.target.value;
+        const val = event.target.value;
+        const label = document.getElementById('paramTypeLabel');
+        const textarea = document.getElementById('inputRows');
+        
+        if (val === 'none') {
+          label.textContent = "mbd — mbi";
+          textarea.placeholder = "E.g.\n9560.6420.88857\t186118092";
+        } else {
+          label.textContent = `${val} — mbd — mbi`;
+          textarea.placeholder = `E.g.\n130\t9560.6420.88857\t186118092`;
+        }
       });
     });
 
@@ -78,26 +91,34 @@ window.$RefreshSig$ = () => (type) => type;</script>
       }
 
       const rows = inputRows.split('\n');
-
       rows.forEach((row, idx) => {
         const cols = row.split('\t');
-        if (cols.length !== 3) return;
-
-        const param1 = encodeURIComponent(cols[0].trim()); // This will be mbcm or mbs
-        const mbd = encodeURIComponent(cols[1].trim());
-        const mbi = encodeURIComponent(cols[2].trim());
-
         let baseUrl = `https://chant3rm1.com/trk/lead?mbm=${encodeURIComponent(mbm)}`;
-        if (mbr) { // Only add mbr if it's not empty
-          baseUrl += `&mbr=${encodeURIComponent(mbr)}`;
+        if (mbr) baseUrl += `&mbr=${encodeURIComponent(mbr)}`;
+
+        let finalUrl = "";
+
+        if (paramType === 'none') {
+          // Expect 2 columns: mbd, mbi
+          if (cols.length < 2) return;
+          const mbd = encodeURIComponent(cols[0].trim());
+          const mbi = encodeURIComponent(cols[1].trim());
+          finalUrl = `${baseUrl}&mbd=${mbd}&mbi=${mbi}`;
+        } else {
+          // Expect 3 columns: (mbcm/mbs), mbd, mbi
+          if (cols.length < 3) return;
+          const paramValue = encodeURIComponent(cols[0].trim());
+          const mbd = encodeURIComponent(cols[1].trim());
+          const mbi = encodeURIComponent(cols[2].trim());
+          finalUrl = `${baseUrl}&${paramType}=${paramValue}&mbd=${mbd}&mbi=${mbi}`;
         }
-        
-        const url = `${baseUrl}&${paramType}=${param1}&mbd=${mbd}&mbi=${mbi}`;
-        urls.push({ id: `url-${idx}`, url, status: "pending", message: "" });
+
+        urls.push({ id: `url-${idx}`, url: finalUrl, status: "pending", message: "" });
       });
 
       if (urls.length === 0) {
-        document.getElementById('urlList').innerHTML = '<div class="url-item fail">No valid rows found. Please ensure rows are tab-delimited with 3 columns.</div>';
+        const expectedCols = paramType === 'none' ? '2' : '3';
+        document.getElementById('urlList').innerHTML = `<div class="url-item fail">No valid rows found. Please ensure rows are tab-delimited with ${expectedCols} columns.</div>`;
       } else {
         renderUrls();
       }
@@ -110,7 +131,6 @@ window.$RefreshSig$ = () => (type) => type;</script>
         if (item.status === 'success') statusClass = 'success';
         else if (item.status === 'fail') statusClass = 'fail';
         else if (item.status === 'processing') statusClass = 'processing';
-
         return `<div class="url-item ${statusClass}" id="${item.id}">${item.url} ${item.message}</div>`;
       }).join('');
     }
@@ -121,15 +141,13 @@ window.$RefreshSig$ = () => (type) => type;</script>
         return;
       }
       if (isProcessing) return;
-
       isProcessing = true;
-      // Update all URLs to pending status initially
+
       urls = urls.map(item => ({ ...item, status: "pending", message: "" }));
       renderUrls();
 
-      const CONCURRENCY_LIMIT = 5; // Number of concurrent requests
+      const CONCURRENCY_LIMIT = 5;
       const tasks = urls.map((urlItem) => async () => {
-        // Mark as processing
         urls = urls.map(u => u.id === urlItem.id ? { ...u, status: "processing", message: "... Processing" } : u);
         renderUrls();
 
@@ -145,7 +163,6 @@ window.$RefreshSig$ = () => (type) => type;</script>
           result = { status: "fail", message: "✖ Error" };
         }
 
-        // Update with final result
         urls = urls.map(u => (u.id === urlItem.id ? { ...u, ...result } : u));
         renderUrls();
       });
@@ -158,26 +175,19 @@ window.$RefreshSig$ = () => (type) => type;</script>
           const task = tasks[taskIndex];
           taskIndex++;
           const promise = task().finally(() => {
-            // Remove the finished promise from the running pool
             const index = runningPromises.indexOf(promise);
-            if (index > -1) {
-              runningPromises.splice(index, 1);
-            }
-            // Run the next task if available
+            if (index > -1) runningPromises.splice(index, 1);
             runNextTask();
           });
           runningPromises.push(promise);
         }
       };
 
-      // Start initial concurrent tasks up to the concurrency limit
       for (let i = 0; i < CONCURRENCY_LIMIT && i < tasks.length; i++) {
         runNextTask();
       }
 
-      // Wait for all running promises to complete
       await Promise.all(runningPromises);
-
       isProcessing = false;
       alert("All URLs processed!");
     }
